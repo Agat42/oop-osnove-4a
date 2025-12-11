@@ -17,9 +17,8 @@ class Publication:
     borrow_date: str = ''
     history: List[Dict] = field(default_factory=list)
 
-    def display_label(self) -> str:
-        status = '[POSUĐENO]' if not self.available else ''
-        return f"{status} {self.title} — {self.author_or_publisher} ({self.year})"
+    def status_text(self) -> str:
+        return 'Dostupno' if self.available else f'Posuđeno ({self.borrowed_to})'
 
     def to_xml_element(self) -> ET.Element:
         el = ET.Element('publication', attrib={'id': str(self.id), 'type': self.type})
@@ -36,6 +35,7 @@ class Publication:
             ET.SubElement(entry, 'date').text = h.get('date','')
             ET.SubElement(entry, 'action').text = h.get('action','')
         return el
+
     @staticmethod
     def from_xml_element(el: ET.Element):
         id = int(el.attrib.get('id','0'))
@@ -57,20 +57,138 @@ class Publication:
                 })
         return Publication(id, type, title, aop, year, available, borrowed_to, borrow_date, history)
 
-
 class LibraryApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('LibroTrack — Školska knjižnica')
-        self.geometry('900x540')
+        self.geometry('1000x600')
+        self.minsize(900, 520)
 
         self.publications: List[Publication] = []
         self.next_id = 1
 
+        self.setup_styles()
         self.create_widgets()
         self.update_status_bar()
 
+    def setup_styles(self):
+        style = ttk.Style(self)
+        style.theme_use('clam')
+
+        self.bg = '#2b2f33'
+        self.panel = '#232629'
+        self.card = '#2f3336'
+        self.fg = '#e6eef6'
+        self.accent = '#4b8ca1'
+        self.btn_bg = '#3a3f42'
+        self.warning = '#d97b7b'
+
+        self.configure(bg=self.bg)
+        style.configure('TFrame', background=self.panel)
+        style.configure('Card.TFrame', background=self.card, relief='flat')
+        style.configure('TLabel', background=self.panel, foreground=self.fg, font=('Segoe UI', 10))
+        style.configure('Header.TLabel', background=self.panel, foreground=self.fg, font=('Segoe UI', 14, 'bold'))
+        style.configure('Title.TLabel', background=self.card, foreground=self.fg, font=('Segoe UI', 12, 'bold'))
+        style.configure('TButton', background=self.btn_bg, foreground=self.fg, relief='flat', padding=6)
+
+        style.configure('mystyle.Treeview',
+                        background=self.card,
+                        foreground=self.fg,
+                        fieldbackground=self.card,
+                        rowheight=26,
+                        font=('Segoe UI', 10))
+        style.configure('mystyle.Treeview.Heading', background=self.panel, foreground=self.fg, font=('Segoe UI', 10, 'bold'))
+        style.map('mystyle.Treeview', background=[('selected', self.accent)], foreground=[('selected', '#ffffff')])
+
     def create_widgets(self):
+        banner = ttk.Frame(self, padding=(12,10))
+        banner.pack(side=tk.TOP, fill=tk.X)
+
+        title_label = ttk.Label(banner, text='LibroTrack — Školska knjižnica', style='Header.TLabel')
+        title_label.pack(side=tk.LEFT)
+
+        main = ttk.Frame(self, padding=12)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        left = ttk.Frame(main, width=320, style='Card.TFrame', padding=12)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,12), pady=6)
+
+        ttk.Label(left, text='Dodaj publikaciju', style='Title.TLabel').pack(anchor=tk.W)
+        self.type_var = tk.StringVar(value='Knjiga')
+        type_frame = ttk.Frame(left, style='Card.TFrame')
+        type_frame.pack(anchor=tk.W, pady=(8,0))
+        ttk.Radiobutton(type_frame, text='Knjiga', variable=self.type_var, value='Knjiga').pack(side=tk.LEFT)
+        ttk.Radiobutton(type_frame, text='Časopis', variable=self.type_var, value='Casopis').pack(side=tk.LEFT, padx=(8,0))
+
+        ttk.Label(left, text='Naslov:').pack(anchor=tk.W, pady=(10,0))
+        self.title_entry = ttk.Entry(left, width=30)
+        self.title_entry.pack(anchor=tk.W)
+
+        ttk.Label(left, text='Autor / Izdavač:').pack(anchor=tk.W, pady=(8,0))
+        self.aop_entry = ttk.Entry(left, width=30)
+        self.aop_entry.pack(anchor=tk.W)
+
+        ttk.Label(left, text='Godina:').pack(anchor=tk.W, pady=(8,0))
+        self.year_entry = ttk.Entry(left, width=30)
+        self.year_entry.pack(anchor=tk.W)
+
+        ttk.Button(left, text='Dodaj publikaciju', command=self.add_publication).pack(pady=(12,4), fill=tk.X)
+
+        ttk.Separator(left, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+
+        ttk.Label(left, text='Filtri i pretraga', style='Title.TLabel').pack(anchor=tk.W)
+        ttk.Label(left, text='Tip:').pack(anchor=tk.W)
+        self.filter_type = tk.StringVar(value='Sve')
+        ttk.Combobox(left, textvariable=self.filter_type, values=['Sve','Knjiga','Casopis'], state='readonly').pack(anchor=tk.W)
+
+        ttk.Label(left, text='Status:').pack(anchor=tk.W, pady=(8,0))
+        self.filter_status = tk.StringVar(value='Sve')
+        ttk.Combobox(left, textvariable=self.filter_status, values=['Sve','Dostupno','Posuđeno'], state='readonly').pack(anchor=tk.W)
+
+        ttk.Label(left, text='Traži (naslov / autor):').pack(anchor=tk.W, pady=(8,0))
+        self.search_var = tk.StringVar()
+        se = ttk.Entry(left, textvariable=self.search_var, width=30)
+        se.pack(anchor=tk.W)
+        se.bind('<KeyRelease>', lambda e: self.refresh_tree())
+
+        ttk.Button(left, text='Primijeni filtre', command=self.refresh_tree).pack(pady=(10,0), fill=tk.X)
+
+        right = ttk.Frame(main)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        header = ttk.Frame(right)
+        header.pack(fill=tk.X, pady=(0,6))
+        ttk.Label(header, text='Publikacije', style='Header.TLabel').pack(side=tk.LEFT)
+
+        columns = ('id', 'title', 'author', 'year', 'status')
+        self.tree = ttk.Treeview(right, columns=columns, show='headings', style='mystyle.Treeview')
+
+        self.tree.heading('title', text='Naslov')
+        self.tree.heading('author', text='Autor / Izdavač')
+        self.tree.heading('year', text='Godina')
+        self.tree.heading('status', text='Status')
+
+        self.tree.column('id', width=0, stretch=False)
+        self.tree.column('title', width=360)
+        self.tree.column('author', width=200)
+        self.tree.column('year', width=80)
+        self.tree.column('status', width=140)
+
+        self.tree.pack(fill=tk.BOTH, expand=True)
+
+        self.tree.bind('<Double-1>', lambda e: self.show_history())
+
+        btn_frame = ttk.Frame(right, padding=(0,8))
+        btn_frame.pack(fill=tk.X)
+        ttk.Button(btn_frame, text='Posudi', command=self.borrow_selected).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text='Vrati', command=self.return_selected).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text='Povijest', command=self.show_history).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text='Izbriši', command=self.delete_selected).pack(side=tk.LEFT, padx=6)
+
+        self.status_var = tk.StringVar()
+        statusbar = ttk.Label(self, textvariable=self.status_var, anchor=tk.W, padding=6)
+        statusbar.pack(side=tk.BOTTOM, fill=tk.X)
+
         menubar = tk.Menu(self)
         filemenu = tk.Menu(menubar, tearoff=0)
         filemenu.add_command(label='Spremi...', command=self.save_xml)
@@ -84,97 +202,44 @@ class LibraryApp(tk.Tk):
         menubar.add_cascade(label='Pomoć', menu=helpmenu)
         self.config(menu=menubar)
 
-        left = ttk.Frame(self, padding=10)
-        left.pack(side=tk.LEFT, fill=tk.Y)
-
-        ttk.Label(left, text='Dodaj publikaciju', font=('Segoe UI', 12,'bold')).pack(anchor=tk.W)
-
-        self.type_var = tk.StringVar(value='Knjiga')
-        ttk.Radiobutton(left, text='Knjiga', variable=self.type_var, value='Knjiga').pack(anchor=tk.W)
-        ttk.Radiobutton(left, text='Časopis', variable=self.type_var, value='Casopis').pack(anchor=tk.W)
-
-        ttk.Label(left, text='Naslov:').pack(anchor=tk.W, pady=(8,0))
-        self.title_entry = ttk.Entry(left, width=30)
-        self.title_entry.pack(anchor=tk.W)
-
-        ttk.Label(left, text='Autor / Izdavač:').pack(anchor=tk.W, pady=(6,0))
-        self.aop_entry = ttk.Entry(left, width=30)
-        self.aop_entry.pack(anchor=tk.W)
-
-        ttk.Label(left, text='Godina:').pack(anchor=tk.W, pady=(6,0))
-        self.year_entry = ttk.Entry(left, width=30)
-        self.year_entry.pack(anchor=tk.W)
-
-        ttk.Button(left, text='Dodaj publikaciju', command=self.add_publication).pack(pady=(10,0))
-
-        ttk.Separator(left, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
-
-        ttk.Label(left, text='Filtri i pretraga', font=('Segoe UI', 11,'bold')).pack(anchor=tk.W)
-
-        ttk.Label(left, text='Tip:').pack(anchor=tk.W, pady=(6,0))
-        self.filter_type = tk.StringVar(value='Sve')
-        ttk.Combobox(left, textvariable=self.filter_type, values=['Sve','Knjiga','Casopis'], state='readonly').pack(anchor=tk.W)
-
-        ttk.Label(left, text='Status:').pack(anchor=tk.W, pady=(6,0))
-        self.filter_status = tk.StringVar(value='Sve')
-        ttk.Combobox(left, textvariable=self.filter_status, values=['Sve','Dostupno','Posuđeno'], state='readonly').pack(anchor=tk.W)
-
-        ttk.Label(left, text='Traži (naslov / autor):').pack(anchor=tk.W, pady=(6,0))
-        self.search_var = tk.StringVar()
-        search_entry = ttk.Entry(left, textvariable=self.search_var, width=30)
-        search_entry.pack(anchor=tk.W)
-        search_entry.bind('<KeyRelease>', lambda e: self.refresh_list())
-
-        ttk.Button(left, text='Primijeni filtre', command=self.refresh_list).pack(pady=(8,0))
-
-        center = ttk.Frame(self, padding=10)
-        center.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        ttk.Label(center, text='Publikacije', font=('Segoe UI', 12,'bold')).pack(anchor=tk.W)
-
-        self.listbox = tk.Listbox(center, activestyle='none')
-        self.listbox.pack(fill=tk.BOTH, expand=True)
-        self.listbox.bind('<Double-Button-1>', lambda e: self.show_history())
-
-        btn_frame = ttk.Frame(center)
-        btn_frame.pack(fill=tk.X, pady=8)
-
-        ttk.Button(btn_frame, text='Posudi', command=self.borrow_selected).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text='Vrati', command=self.return_selected).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text='Povijest', command=self.show_history).pack(side=tk.LEFT, padx=4)
-        ttk.Button(btn_frame, text='Izbriši', command=self.delete_selected).pack(side=tk.LEFT, padx=4)
-
-        self.status_var = tk.StringVar()
-        statusbar = ttk.Label(self, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=3)
-        statusbar.pack(side=tk.BOTTOM, fill=tk.X)
-
     def add_publication(self):
-        t = self.type_var.get()
         title = self.title_entry.get().strip()
         aop = self.aop_entry.get().strip()
         year = self.year_entry.get().strip()
+
         if not title:
             messagebox.showwarning('Greška', 'Naslov ne smije biti prazan')
             return
-        pub = Publication(self.next_id, t, title, aop, year)
+
+        if year and not year.isdigit():
+            messagebox.showerror('Greška', 'Godina mora sadržavati isključivo brojke')
+            return
+
+        pub = Publication(self.next_id, self.type_var.get(), title, aop, year)
         self.next_id += 1
         self.publications.append(pub)
+
         self.title_entry.delete(0, tk.END)
         self.aop_entry.delete(0, tk.END)
         self.year_entry.delete(0, tk.END)
-        self.refresh_list()
+
+        self.refresh_tree()
         self.update_status_bar()
 
     def get_selected_publication(self) -> Optional[Publication]:
-        sel = self.listbox.curselection()
+        sel = self.tree.selection()
         if not sel:
             messagebox.showinfo('Info', 'Nijedna publikacija nije odabrana')
             return None
-        idx = sel[0]
-        filtered = self.get_filtered_publications()
-        if idx >= len(filtered):
+        iid = sel[0]
+        try:
+            pub_id = int(self.tree.set(iid, 'id'))
+        except:
             return None
-        return filtered[idx]
+        for p in self.publications:
+            if p.id == pub_id:
+                return p
+        return None
 
     def borrow_selected(self):
         pub = self.get_selected_publication()
@@ -183,7 +248,7 @@ class LibraryApp(tk.Tk):
         if not pub.available:
             messagebox.showinfo('Info', 'Publikacija je već posuđena')
             return
-        user = simpledialog.askstring('Posudi', 'Unesite ime učenika/korisnika:')
+        user = simpledialog.askstring('Posudi', 'Unesite ime učenika / korisnika:')
         if not user:
             return
         today = datetime.date.today().isoformat()
@@ -191,7 +256,7 @@ class LibraryApp(tk.Tk):
         pub.borrowed_to = user
         pub.borrow_date = today
         pub.history.append({'user': user, 'date': today, 'action': 'posudba'})
-        self.refresh_list()
+        self.refresh_tree()
         self.update_status_bar()
 
     def return_selected(self):
@@ -209,7 +274,7 @@ class LibraryApp(tk.Tk):
         pub.borrowed_to = ''
         pub.borrow_date = ''
         pub.history.append({'user': user, 'date': today, 'action': 'vraćanje'})
-        self.refresh_list()
+        self.refresh_tree()
         self.update_status_bar()
 
     def show_history(self):
@@ -218,19 +283,17 @@ class LibraryApp(tk.Tk):
             return
         hwin = tk.Toplevel(self)
         hwin.title(f'Povijest: {pub.title}')
-        hwin.geometry('450x300')
+        hwin.geometry('480x320')
+        hwin.configure(bg=self.panel)
         lbl = ttk.Label(hwin, text=f'Povijest posudbi za: {pub.title}', font=('Segoe UI', 11,'bold'))
         lbl.pack(anchor=tk.W, padx=8, pady=6)
-        listbox = tk.Listbox(hwin)
-        listbox.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        lb = tk.Listbox(hwin, bg=self.card, fg=self.fg, selectbackground=self.accent)
+        lb.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
         if not pub.history:
-            listbox.insert(tk.END, 'Prazna povijest')
+            lb.insert(tk.END, 'Prazna povijest')
         else:
             for e in pub.history:
-                action = e.get('action','')
-                user = e.get('user','')
-                date = e.get('date','')
-                listbox.insert(tk.END, f"{date} — {action} — {user}")
+                lb.insert(tk.END, f"{e.get('date')} — {e.get('action')} — {e.get('user')}")
         ttk.Button(hwin, text='Zatvori', command=hwin.destroy).pack(pady=6)
 
     def delete_selected(self):
@@ -240,14 +303,14 @@ class LibraryApp(tk.Tk):
         if not messagebox.askyesno('Brisanje', f'Želite li izbrisati: {pub.title}?'):
             return
         self.publications = [p for p in self.publications if p.id != pub.id]
-        self.refresh_list()
+        self.refresh_tree()
         self.update_status_bar()
 
-    def refresh_list(self):
-        self.listbox.delete(0, tk.END)
-        filtered = self.get_filtered_publications()
-        for p in filtered:
-            self.listbox.insert(tk.END, p.display_label())
+    def refresh_tree(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for p in self.get_filtered_publications():
+            self.tree.insert('', tk.END, values=(p.id, p.title, p.author_or_publisher, p.year, p.status_text()))
 
     def get_filtered_publications(self) -> List[Publication]:
         typ = self.filter_type.get()
@@ -261,9 +324,8 @@ class LibraryApp(tk.Tk):
                 continue
             if stat == 'Posuđeno' and p.available:
                 continue
-            if q:
-                if q not in p.title.lower() and q not in p.author_or_publisher.lower():
-                    continue
+            if q and q not in p.title.lower() and q not in p.author_or_publisher.lower():
+                continue
             res.append(p)
         return res
 
@@ -273,10 +335,10 @@ class LibraryApp(tk.Tk):
         self.status_var.set(f'Ukupno: {total} | Dostupno: {available}')
 
     def show_about(self):
-        messagebox.showinfo('O aplikaciji', 'LibroTrack — školska knjižnica\nVerzija: 1.0\nAutor: Agata Galant / 4.A')
+        messagebox.showinfo('O aplikaciji', 'LibroTrack — školska knjižnica\nVerzija: 1.1\nAutor: Agata Galant')
 
     def save_xml(self):
-        path = filedialog.asksaveasfilename(defaultextension='.xml', filetypes=[('XML files','*.xml')], title='Spremi knjižnicu')
+        path = filedialog.asksaveasfilename(defaultextension='.xml', filetypes=[('XML files','*.xml')])
         if not path:
             return
         root = ET.Element('library', attrib={'next_id': str(self.next_id)})
@@ -290,7 +352,7 @@ class LibraryApp(tk.Tk):
             messagebox.showerror('Greška', f'Ne mogu spremiti datoteku: {e}')
 
     def load_xml(self):
-        path = filedialog.askopenfilename(filetypes=[('XML files','*.xml')], title='Učitaj knjižnicu')
+        path = filedialog.askopenfilename(filetypes=[('XML files','*.xml')])
         if not path:
             return
         try:
@@ -298,15 +360,13 @@ class LibraryApp(tk.Tk):
             root = tree.getroot()
             self.publications.clear()
             for el in root.findall('publication'):
-                p = Publication.from_xml_element(el)
-                self.publications.append(p)
-            self.next_id = int(root.attrib.get('next_id', str(max((p.id for p in self.publications), default=0)+1)))
-            self.refresh_list()
+                self.publications.append(Publication.from_xml_element(el))
+            self.next_id = int(root.attrib.get('next_id', '1'))
+            self.refresh_tree()
             self.update_status_bar()
             messagebox.showinfo('Učitavanje', 'Uspješno učitano')
         except Exception as e:
             messagebox.showerror('Greška', f'Ne mogu učitati datoteku: {e}')
-
 
 if __name__ == '__main__':
     app = LibraryApp()
