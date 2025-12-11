@@ -6,8 +6,9 @@ Aplikacija za upravljanje školskom knjižnicom. Omogućuje dodavanje publikacij
 ## Pokretanje
 1. Instaliraj Python 3.14.2
 2. Instaliraj potrebne biblioteke: `pip install -r requirements.txt`
-3. Pokreni skriptu: `python knjiga.py`
+3. Pokreni skriptu: `python librotrack.py`
 
 ## Screenshot
 ![Screenshot aplikacije](screenshot.png)
+
 
